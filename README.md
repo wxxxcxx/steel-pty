@@ -37,6 +37,6 @@ When the terminal is focused, the following keys are handled directly:
 
 - `Ctrl-Backtick`: hide the terminal panel
 - `Ctrl-Shift-Backtick`: create a terminal
-- `Ctrl-Alt-Backtick`: toggle fullscreen
+- `Ctrl-Enter`: toggle fullscreen
 - `Ctrl-PageUp` / `Ctrl-PageDown`: switch terminals
 - `Ctrl-Escape`: return focus to the editor while keeping the panel visible

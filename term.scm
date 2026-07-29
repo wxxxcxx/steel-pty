@@ -634,7 +634,7 @@
 (define ctrl-l (string->key-event "C-l"))
 (define ctrl-backtick (string->key-event "C-`"))
 (define ctrl-shift-backtick (string->key-event "C-S-`"))
-(define ctrl-alt-backtick (string->key-event "C-A-`"))
+(define ctrl-enter (string->key-event "C-ret"))
 (define ctrl-page-up (string->key-event "C-pageup"))
 (define ctrl-page-down (string->key-event "C-pagedown"))
 
@@ -661,7 +661,7 @@
         (enqueue-thread-local-callback (lambda () (eval '(new-term))))
         event-result/consume]
 
-       [(equal? (event->key-event event) ctrl-alt-backtick)
+       [(equal? (event->key-event event) ctrl-enter)
         (enqueue-thread-local-callback
           (lambda () (eval '(toggle-terminal-fullscreen))))
         event-result/consume]
