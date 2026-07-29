@@ -289,6 +289,12 @@
   (~> (hash) add-handle add-cursor))
 
 (define (show-term term)
+  ;; Every terminal must use the drawable content size, not the outer panel
+  ;; size. New terminals otherwise retain the frame's extra rows and columns.
+  (term-resize-from-term term
+                         (max 1 (- *default-terminal-rows* 3))
+                         (max 1 (- *default-terminal-cols* 4)))
+
   ;; Update the box to now show this
   (set-box! (Terminal-focused? term) #t)
 
@@ -1014,8 +1020,7 @@
     (pty-resize! *pty-process* rows cols))
 
   (set-box! (Terminal-viewport-width terminal) cols)
-  ; (set-box! (Terminal-viewport-height terminal) rows)
-  )
+  (set-box! (Terminal-viewport-height terminal) rows))
 
 (define (term-resize-impl rows cols)
   (define cursor (TerminalRegistry-cursor *terminal-registry*))
