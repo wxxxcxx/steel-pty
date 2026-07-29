@@ -11,7 +11,7 @@ cargo xtask steel
 Install the plugin:
 
 ```sh
-forge pkg install --git https://github.com/mattwparas/steel-pty
+forge pkg install --git https://github.com/wxxxcxx/steel-pty
 ```
 
 Load the plugin by adding the following line to `~/.config/helix/init.scm`:
@@ -22,10 +22,21 @@ Load the plugin by adding the following line to `~/.config/helix/init.scm`:
 
 # Usage
 
-- `:open-term`: open a new terminal
-- `Shift-Tab`: switch back to the editor
-- `:new-term`: create a new terminal instance
-- `:switch-term`: switch between terminal instances
-- `:hide-terminal`: hide the terminal
-- `:kill-current-terminal`: kill the current terminal instance
+This fork renders the terminal as a bottom panel and adds terminal workspace
+controls. Bind the exported functions in your Helix configuration as needed.
 
+- `open-term`: open or focus the terminal panel
+- `new-term`: create and focus a new terminal
+- `switch-term`: focus the next terminal
+- `switch-term-previous`: focus the previous terminal
+- `toggle-terminal-fullscreen`: toggle between the bottom panel and fullscreen
+- `hide-terminal`: hide the terminal panel
+- `kill-active-terminal`: kill the active terminal
+
+When the terminal is focused, the following keys are handled directly:
+
+- `Ctrl-Backtick`: hide the terminal panel
+- `Ctrl-Shift-Backtick`: create a terminal
+- `Ctrl-Alt-Backtick`: toggle fullscreen
+- `Ctrl-PageUp` / `Ctrl-PageDown`: switch terminals
+- `Ctrl-Escape`: return focus to the editor while keeping the panel visible

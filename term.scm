@@ -57,7 +57,9 @@
 (provide open-term
          new-term
          kill-active-terminal
+         toggle-terminal-fullscreen
          switch-term
+         switch-term-previous
          term-resize
          (contract/out set-default-terminal-cols! (->/c int? void?))
          (contract/out set-default-terminal-rows! (->/c int? void?))
@@ -290,7 +292,7 @@
   ;; Update the box to now show this
   (set-box! (Terminal-focused? term) #t)
 
-  (set-editor-clip-right! *default-terminal-cols*)
+  (set-editor-clip-bottom! *default-terminal-rows*)
 
   ;; Mark the terminal as active, only if it isn't active already.
   ;; We don't want to push this component again if it already is
@@ -321,6 +323,10 @@
 (struct FractionAsHeight (fraction))
 
 (define *terminal-fraction* (/ 1 3))
+(define *terminal-fullscreen?* #f)
+(define *terminal-count* 0)
+(define *terminal-index* 0)
+;; helix-config: terminal workspace controls v2
 
 ;;@doc
 ;; Resize the terminal window
@@ -348,16 +354,21 @@
       (begin
         (set! stashed-area rect)
 
-        ;; Just drop the width by 4, always use a quarter of the screen
-        (set! *default-terminal-cols* (round (* *terminal-fraction* (area-width rect))))
+        (define available-height (area-height rect))
+        (define panel-height
+          (if *terminal-fullscreen?*
+              available-height
+              (max 6 (round (* *terminal-fraction* available-height)))))
+        (set! *default-terminal-rows* panel-height)
+        (set! *default-terminal-cols* (area-width rect))
 
-        (set-editor-clip-right! *default-terminal-cols*)
-        (term-resize-impl (- (area-height rect) 3) (- *default-terminal-cols* 5)) ;; Shave one off
+        (set-editor-clip-bottom! (if *terminal-fullscreen?* 0 panel-height))
+        (term-resize-impl (- *default-terminal-rows* 3) (- *default-terminal-cols* 4))
         (set! terminal-area
-              (area (+ (area-x rect) (- (area-width rect) *default-terminal-cols*))
-                    (area-y rect)
+              (area (area-x rect)
+                    (+ (area-y rect) (- available-height panel-height))
                     *default-terminal-cols*
-                    (- (area-height rect) 1)))
+                    panel-height))
         terminal-area)))
 
 ; (define (alternative-calculate-block-area state rect)
@@ -499,6 +510,12 @@
     (block/render frame
                   block-area
                   (make-block (theme->bg *helix.cx*) (theme->bg *helix.cx*) "all" "plain"))
+    (frame-set-string! frame
+                       (+ (area-x block-area) 2)
+                       (area-y block-area)
+                       (string-append " Terminal " (number->string *terminal-index*) "/"
+                                      (number->string *terminal-count*) " ")
+                       (style-with-bold (theme-scope-ref "ui.text.info")))
 
     ;; TODO: Don't render while its being dragged around. We should probably
     ;; rendering something like "<Rendering paused while window is being dragged>"
@@ -615,6 +632,11 @@
      event-result/ignore]))
 
 (define ctrl-l (string->key-event "C-l"))
+(define ctrl-backtick (string->key-event "C-`"))
+(define ctrl-shift-backtick (string->key-event "C-S-`"))
+(define ctrl-alt-backtick (string->key-event "C-A-`"))
+(define ctrl-page-up (string->key-event "C-pageup"))
+(define ctrl-page-down (string->key-event "C-pagedown"))
 
 ;; Event handler for the terminal.
 ;; This primarily focuses on forwarding the key events
@@ -634,6 +656,33 @@
 
      (cond
 
+       [(equal? (event->key-event event) ctrl-shift-backtick)
+        (set-box! (Terminal-focused? state) #f)
+        (enqueue-thread-local-callback (lambda () (eval '(new-term))))
+        event-result/consume]
+
+       [(equal? (event->key-event event) ctrl-alt-backtick)
+        (enqueue-thread-local-callback
+          (lambda () (eval '(toggle-terminal-fullscreen))))
+        event-result/consume]
+
+       [(equal? (event->key-event event) ctrl-page-up)
+        (set-box! (Terminal-focused? state) #f)
+        (enqueue-thread-local-callback (lambda () (eval '(switch-term-previous))))
+        event-result/consume]
+
+       [(equal? (event->key-event event) ctrl-page-down)
+        (set-box! (Terminal-focused? state) #f)
+        (enqueue-thread-local-callback (lambda () (eval '(switch-term))))
+        event-result/consume]
+
+       ;; Toggle the terminal with the same shortcut used to open it.
+       [(equal? (event->key-event event) ctrl-backtick)
+        (set-box! (Terminal-focused? state) #f)
+        (set-box! (Terminal-active state) #f)
+        (set-editor-clip-bottom! 0)
+        event-result/close]
+
        ;; TODO: Add custom key bindings for this
        [(and char (equal? (event->key-event event) ctrl-l))
         (pty-process-send-command *pty-process* "clear\n")
@@ -645,15 +694,12 @@
         (pty-process-send-command *pty-process* "\x7f;")
         event-result/consume]
 
-       ;; Close with ctrl-esc
+       ;; Return focus to the editor without hiding the terminal panel.
        [(key-event-escape? event)
         (if (equal? (key-event-modifier event) key-modifier-ctrl)
             (begin
-
-              (set-box! (Terminal-active state) #f)
-              (set-editor-clip-right! 0)
-
-              event-result/close)
+              (set-box! (Terminal-focused? state) #f)
+              event-result/consume)
             (begin
               (pty-process-send-command *pty-process* "\x1b;")
               event-result/consume))]
@@ -678,7 +724,7 @@
 
         (if (equal? (key-event-modifier event) key-modifier-shift)
             (begin
-              (set-box! (Terminal-focused? state) #f)
+              (pty-process-send-command *pty-process* "\x1b;[Z")
               event-result/consume)
 
             (begin
@@ -860,7 +906,7 @@
   (when cursor
     (set-box! (Terminal-focused? term) #f)
     (set-box! (Terminal-active term) #f)
-    (set-editor-clip-right! 0)
+    (set-editor-clip-bottom! 0)
     (pop-last-component! (Terminal-name term))))
 
 ;;@doc
@@ -883,6 +929,8 @@
 
      (set-TerminalRegistry-terminals! *terminal-registry* (list new-term))
      (set-TerminalRegistry-cursor! *terminal-registry* 0)
+     (set! *terminal-count* 1)
+     (set! *terminal-index* 1)
 
      (show-term new-term)]))
 
@@ -906,33 +954,52 @@
   (when cursor
     (define existing-terminal (list-ref (TerminalRegistry-terminals *terminal-registry*) cursor))
     (set-box! (Terminal-active existing-terminal) #f)
-    (enqueue-thread-local-callback (lambda () void)))
+    (pop-last-component! (Terminal-name existing-terminal)))
 
   ;; Append the new terminal to the
   (set-TerminalRegistry-terminals! *terminal-registry*
                                    (cons new-term (TerminalRegistry-terminals *terminal-registry*)))
   (set-TerminalRegistry-cursor! *terminal-registry* 0)
+  (set! *terminal-count* (length (TerminalRegistry-terminals *terminal-registry*)))
+  (set! *terminal-index* 1)
 
   (show-term new-term))
 
 ;;@doc
 ;; Swaps to the next active terminal, if there is one.
-(define (switch-term)
-
+(define (switch-term-by offset)
   (define cursor (TerminalRegistry-cursor *terminal-registry*))
 
-  (when cursor
-
-    (define existing-terminal (list-ref (TerminalRegistry-terminals *terminal-registry*) cursor))
+  (when (and cursor (> (length (TerminalRegistry-terminals *terminal-registry*)) 1))
+    (define terminals (TerminalRegistry-terminals *terminal-registry*))
+    (define existing-terminal (list-ref terminals cursor))
+    (define next-cursor (modulo (+ cursor offset) (length terminals)))
     ;; Hide the other terminal
     (set-box! (Terminal-active existing-terminal) #f)
+    (pop-last-component! (Terminal-name existing-terminal))
+    (set-TerminalRegistry-cursor! *terminal-registry* next-cursor)
+    (set! *terminal-index* (+ next-cursor 1))
+    (show-term (list-ref terminals next-cursor))))
 
-    (if (= (length (TerminalRegistry-terminals *terminal-registry*)) (+ 1 cursor))
+(define (switch-term)
+  (switch-term-by 1))
 
-        (set-TerminalRegistry-cursor! *terminal-registry* 0)
-        (set-TerminalRegistry-cursor! *terminal-registry* (+ 1 cursor)))
+;;@doc
+;; Swaps to the previous active terminal, if there is one.
+(define (switch-term-previous)
+  (switch-term-by -1))
 
-    (show-term (list-ref (TerminalRegistry-terminals *terminal-registry*) (+ 1 cursor)))))
+;;@doc
+;; Toggle the active terminal between the bottom panel and fullscreen.
+(define (toggle-terminal-fullscreen)
+  (set! *terminal-fullscreen?* (not *terminal-fullscreen?*))
+  (set! stashed-area #f)
+  (set! terminal-area #f)
+  (define cursor (TerminalRegistry-cursor *terminal-registry*))
+  (if cursor
+      (show-term (list-ref (TerminalRegistry-terminals *terminal-registry*) cursor))
+      (open-term))
+  (enqueue-thread-local-callback (lambda () void)))
 
 (define (term-resize-from-term terminal rows cols)
   (define *vte* (Terminal-*vte* terminal))
@@ -985,13 +1052,17 @@
   (set-TerminalRegistry-terminals! *terminal-registry*
                                    (remove-nth (TerminalRegistry-terminals *terminal-registry*)
                                                cursor))
+  (set! *terminal-count* (length (TerminalRegistry-terminals *terminal-registry*)))
 
   ;; Move the cursor to the first one, if it exists, otherwise false
   (if (empty? (TerminalRegistry-terminals *terminal-registry*))
       (begin
         (set-TerminalRegistry-cursor! *terminal-registry* #f)
-        (set-editor-clip-right! 0))
-      (set-TerminalRegistry-cursor! *terminal-registry* 0))
+        (set! *terminal-index* 0)
+        (set-editor-clip-bottom! 0))
+      (begin
+        (set-TerminalRegistry-cursor! *terminal-registry* 0)
+        (set! *terminal-index* 1)))
 
   (enqueue-thread-local-callback (lambda () void)))
 
@@ -1030,7 +1101,7 @@
               (set-box! (Terminal-active state) #f)
 
               ;; Reset the clipping back to 0 while its not active
-              (set-editor-clip-right! 0)
+              (set-editor-clip-bottom! 0)
 
               event-result/close)
             (begin
