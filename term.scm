@@ -509,7 +509,10 @@
     ; (block/render frame block-area (make-block (style) (style) "all" "plain"))
     (block/render frame
                   block-area
-                  (make-block (theme->bg *helix.cx*) (theme->bg *helix.cx*) "all" "plain"))
+                  (make-block (theme->bg *helix.cx*)
+                              (theme-scope-ref "ui.window")
+                              "top"
+                              "plain"))
     (frame-set-string! frame
                        (+ (area-x block-area) 2)
                        (area-y block-area)
