@@ -666,6 +666,14 @@
 (define ctrl-page-up (string->key-event "C-pageup"))
 (define ctrl-page-down (string->key-event "C-pagedown"))
 
+;; POSIX terminals encode Ctrl+A..Z as bytes 1..26. Keeping this conversion
+;; here preserves shell/readline shortcuts without teaching Panel about keys.
+(define (terminal-control-text char)
+  (define code (char->integer (char-downcase char)))
+  (and (>= code 97)
+       (<= code 122)
+       (string (integer->char (- code 96)))))
+
 ;; Event handler for the terminal.
 ;; This primarily focuses on forwarding the key events
 ;; and the mouse events down to the underlying terminal
@@ -673,6 +681,10 @@
 ;; in order to make this as smooth as possible.
 (define (terminal-event-handler state event)
   (define char (key-event-char event))
+  (define control-text
+    (and char
+         (equal? (key-event-modifier event) key-modifier-ctrl)
+         (terminal-control-text char)))
   (define *pty-process* (Terminal-*pty-process* state))
   (define *vte* (Terminal-*vte* state))
   (define now (instant/now))
@@ -721,9 +733,8 @@
         (pop-last-component-by-name! (Terminal-name state))
         event-result/consume]
 
-       ;; TODO: Add custom key bindings for this
-       [(and char (equal? (event->key-event event) ctrl-l))
-        (pty-process-send-command *pty-process* "clear\n")
+       [control-text
+        (pty-process-send-command *pty-process* control-text)
         event-result/consume]
 
        ;; Backspace
@@ -740,18 +751,6 @@
               event-result/consume)
             (begin
               (pty-process-send-command *pty-process* "\x1b;")
-              event-result/consume))]
-
-       [(equal? char #\c)
-
-        (if (equal? (key-event-modifier event) key-modifier-ctrl)
-            (begin
-              (pty-process-send-command *pty-process* "\x03;")
-              event-result/consume)
-
-            (begin
-
-              (pty-process-send-command *pty-process* (string char))
               event-result/consume))]
 
        [(key-event-enter? event)
@@ -1122,6 +1121,10 @@
 
 (define (xplr-event-handler state event)
   (define char (key-event-char event))
+  (define control-text
+    (and char
+         (equal? (key-event-modifier event) key-modifier-ctrl)
+         (terminal-control-text char)))
   (define *pty-process* (Terminal-*pty-process* state))
   (define *vte* (Terminal-*vte* state))
   (define now (instant/now))
@@ -1138,6 +1141,10 @@
     [(unbox (Terminal-focused? state))
 
      (cond
+       [control-text
+        (pty-process-send-command *pty-process* control-text)
+        event-result/consume-without-rerender]
+
        ;; Backspace
        [(key-event-backspace? event)
 
