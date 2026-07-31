@@ -94,7 +94,10 @@ impl PtyProcess {
 
     // TODO: Replace this with a proper result rather than a bool
     pub fn send_command_char(&mut self, command: char) -> bool {
-        send_utf8_char(&self.command_sender, command)
+        self.command_sender
+            .send(command as u8)
+            .map(|_| true)
+            .unwrap_or(false)
     }
 
     // TODO: Replace this with a proper result rather than a bool
@@ -177,30 +180,6 @@ impl PtyProcess {
     }
 }
 
-fn send_utf8_char(sender: &Sender<u8>, command: char) -> bool {
-    let mut encoded = [0; 4];
-    for byte in command.encode_utf8(&mut encoded).as_bytes() {
-        if sender.send(*byte).is_err() {
-            return false;
-        }
-    }
-
-    true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sends_non_ascii_chars_as_utf8() {
-        let (sender, receiver) = channel();
-
-        assert!(send_utf8_char(&sender, '中'));
-        assert_eq!(receiver.try_iter().collect::<Vec<_>>(), "中".as_bytes());
-    }
-}
-
 impl Custom for PtyProcess {}
 
 impl Drop for PtyProcess {
@@ -250,7 +229,6 @@ fn create_module() -> FFIModule {
             scroll_up_modifier: 0,
         })
         .register_fn("vte/advance-bytes", VirtualTerminal::advance_bytes)
-        .register_fn("vte/send-paste", VirtualTerminal::send_paste)
         // Advancing with immediate action
         .register_fn(
             "vte/advance-bytes-char",
@@ -808,13 +786,8 @@ impl VirtualTerminal {
         self.terminal.advance_bytes(bytes)
     }
 
-    fn send_paste(&mut self, text: &str) -> bool {
-        self.terminal.send_paste(text).is_ok()
-    }
-
     fn advance_bytes_char(&mut self, bytes: char) {
-        let mut encoded = [0; 4];
-        self.terminal.advance_bytes(bytes.encode_utf8(&mut encoded))
+        self.terminal.advance_bytes(&[bytes as u8])
     }
 
     fn advance_bytes_with_carriage_return(&mut self, bytes: &str) {

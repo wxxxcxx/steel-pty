@@ -20,7 +20,6 @@
                           async-try-read-line
                           virtual-terminal
                           vte/advance-bytes
-                          vte/send-paste
                           vte/advance-bytes-with-carriage-return
                           vte/lines
                           vte/line->string
@@ -63,11 +62,6 @@
 (provide open-term
          new-term
          kill-active-terminal
-         terminal-panel-render!
-         terminal-panel-handle-event
-         terminal-panel-cursor
-         terminal-panel-focus!
-         terminal-panel-blur!
          toggle-terminal-fullscreen
          switch-term
          switch-term-previous
@@ -259,7 +253,7 @@
     (define *vte* (Terminal-*vte* term))
     (define *kill-switch* (Terminal-kill-switch term))
     (if (unbox *kill-switch*)
-        void
+        (pop-last-component! (Terminal-name term))
         (helix-await-callback (async-try-read-line *pty-process*)
                               (lambda (line)
                                 (when line
@@ -330,12 +324,6 @@
     (pop-last-component-by-name! (Terminal-name term)))
   (set-box! (Terminal-active term) #t)
   (push-terminal-component! term))
-
-;; Main terminals are hosted by helix-config's PanelHost. Activating one must
-;; only update PTY state; the host owns the Helix component stack and focus.
-(define (show-panel-term term)
-  (set-box! (Terminal-focused? term) #t)
-  (set-box! (Terminal-active term) #t))
 
 (define *min-term-width* 4)
 (define *min-term-height* 2)
@@ -500,17 +488,6 @@
 (define terminal-cursor-handler
   (lambda (state _) (if (unbox (Terminal-focused? state)) (Terminal-cursor state) #f)))
 
-(define (terminal-exact-area state rect)
-  (set! *default-terminal-rows* (area-height rect))
-  (set! *default-terminal-cols* (area-width rect))
-  ;; The PTY viewport excludes the border and padding drawn by the renderer.
-  (define rows (max 1 (- (area-height rect) 3)))
-  (define cols (max 1 (- (area-width rect) 4)))
-  (unless (and (= rows (unbox (Terminal-viewport-height state)))
-               (= cols (unbox (Terminal-viewport-width state))))
-    (term-resize-from-term state rows cols))
-  rect)
-
 ;; Renders the terminal. The renderer is implemented primarily as a cursor
 ;; over the cells of the terminal, translated from the underlying
 ;; representation in the wezterm library back into something that helix can
@@ -521,17 +498,14 @@
 ;; where relevant explicitly - the foreground and background cell styles
 ;; are reused, as well as the string allocation for the individual cell
 ;; that we are currently rendering.
-(define (terminal-render state rect frame [exact-area? #f])
+(define (terminal-render state rect frame)
 
   (define now (instant/now))
 
   ;; If this is still alive, keep it around
   (unless (unbox (Terminal-kill-switch state))
 
-    (define block-area
-      (if exact-area?
-          (terminal-exact-area state rect)
-          (alternative-calculate-area state rect)))
+    (define block-area (alternative-calculate-area state rect))
 
     (define x-offset (+ 1 (area-x block-area)))
     (define y-offset (+ 1 (area-y block-area)))
@@ -705,12 +679,6 @@
   (define now (instant/now))
 
   (cond
-    ;; Paste is a distinct Helix event, not a sequence of key events. Let the
-    ;; VTE preserve bracketed-paste semantics requested by the child process.
-    [(and (unbox (Terminal-focused? state)) (paste-event? event))
-     (vte/send-paste *vte* (paste-event-string event))
-     event-result/consume]
-
     ;; If the terminal is focused, we are going to
     ;; possibly capture input
     [(unbox (Terminal-focused? state))
@@ -722,7 +690,9 @@
         (enqueue-thread-local-callback (lambda () (eval '(new-term))))
         event-result/consume]
 
-       ;; Fullscreen is owned by the host Panel.
+       ;; Fullscreen is owned by the host Panel. Ignore Ctrl-Enter here so the
+       ;; editor's global binding can update layout and native terminal state
+       ;; as one transition.
        [(equal? (event->key-event event) ctrl-enter)
         event-result/ignore]
 
@@ -736,10 +706,15 @@
         (enqueue-thread-local-callback (lambda () (eval '(switch-term))))
         event-result/consume]
 
-       ;; PanelHost owns lifecycle shortcuts and will decide whether this
-       ;; means close, focus, or fullscreen.
+       ;; Toggle the terminal with the same shortcut used to open it.
        [(equal? (event->key-event event) ctrl-backtick)
-        event-result/ignore]
+        (set-box! (Terminal-focused? state) #f)
+        (set-box! (Terminal-active state) #f)
+        (set-editor-clip-bottom! 0)
+        ;; `event-result/close` pops the frontmost component, which may be a
+        ;; file tree layered above this terminal. Remove this terminal only.
+        (pop-last-component-by-name! (Terminal-name state))
+        event-result/consume]
 
        ;; TODO: Add custom key bindings for this
        [(and char (equal? (event->key-event event) ctrl-l))
@@ -755,7 +730,9 @@
        ;; Return focus to the editor without hiding the terminal panel.
        [(key-event-escape? event)
         (if (equal? (key-event-modifier event) key-modifier-ctrl)
-            event-result/ignore
+            (begin
+              (set-box! (Terminal-focused? state) #f)
+              event-result/consume)
             (begin
               (pty-process-send-command *pty-process* "\x1b;")
               event-result/consume))]
@@ -828,37 +805,6 @@
 (struct TerminalRegistry (terminals cursor) #:mutable)
 
 (define *terminal-registry* (TerminalRegistry '() #f))
-
-(define (current-panel-terminal)
-  (define cursor (TerminalRegistry-cursor *terminal-registry*))
-  (and cursor (list-ref (TerminalRegistry-terminals *terminal-registry*) cursor)))
-
-;; These callbacks expose terminal behavior without creating a component.
-;; PanelHost supplies the exact slot rectangle and routes input to them.
-(define (terminal-panel-render! slot-area _root-area frame)
-  (define term (current-panel-terminal))
-  (when (and term (unbox (Terminal-active term)))
-    (terminal-render term slot-area frame #t)))
-
-(define (terminal-panel-handle-event event)
-  (define term (current-panel-terminal))
-  (if (and term (unbox (Terminal-active term)))
-      (terminal-event-handler term event)
-      event-result/ignore))
-
-(define (terminal-panel-cursor slot-area _root-area)
-  (define term (current-panel-terminal))
-  (if (and term (unbox (Terminal-active term)))
-      (terminal-cursor-handler term slot-area)
-      #f))
-
-(define (terminal-panel-focus!)
-  (define term (current-panel-terminal))
-  (when term (set-box! (Terminal-focused? term) #t)))
-
-(define (terminal-panel-blur!)
-  (define term (current-panel-terminal))
-  (when term (set-box! (Terminal-focused? term) #f)))
 
 ;; Reinsert a visible terminal above a newly opened panel without changing
 ;; which component owns keyboard focus.
@@ -1003,7 +949,8 @@
   (when cursor
     (set-box! (Terminal-focused? term) #f)
     (set-box! (Terminal-active term) #f)
-    (set-editor-clip-bottom! 0)))
+    (set-editor-clip-bottom! 0)
+    (pop-last-component! (Terminal-name term))))
 
 ;;@doc
 ;; Opens a new terminal
@@ -1012,7 +959,7 @@
 
   ;; When the cursor exists, we defer to opening an existing one
   (cond
-    [cursor (show-panel-term (list-ref (TerminalRegistry-terminals *terminal-registry*) cursor))]
+    [cursor (show-term (list-ref (TerminalRegistry-terminals *terminal-registry*) cursor))]
     [else
      ;; 45 rows, 80 cols
      (define new-term
@@ -1028,7 +975,7 @@
      (set! *terminal-count* 1)
      (set! *terminal-index* 1)
 
-     (show-panel-term new-term)]))
+     (show-term new-term)]))
 
 ;;@doc
 ;; Create a new terminal instance
@@ -1049,7 +996,8 @@
   ;; Hide the old one
   (when cursor
     (define existing-terminal (list-ref (TerminalRegistry-terminals *terminal-registry*) cursor))
-    (set-box! (Terminal-active existing-terminal) #f))
+    (set-box! (Terminal-active existing-terminal) #f)
+    (pop-last-component! (Terminal-name existing-terminal)))
 
   ;; Append the new terminal to the
   (set-TerminalRegistry-terminals! *terminal-registry*
@@ -1058,7 +1006,7 @@
   (set! *terminal-count* (length (TerminalRegistry-terminals *terminal-registry*)))
   (set! *terminal-index* 1)
 
-  (show-panel-term new-term))
+  (show-term new-term))
 
 ;;@doc
 ;; Swaps to the next active terminal, if there is one.
@@ -1071,9 +1019,10 @@
     (define next-cursor (modulo (+ cursor offset) (length terminals)))
     ;; Hide the other terminal
     (set-box! (Terminal-active existing-terminal) #f)
+    (pop-last-component! (Terminal-name existing-terminal))
     (set-TerminalRegistry-cursor! *terminal-registry* next-cursor)
     (set! *terminal-index* (+ next-cursor 1))
-    (show-panel-term (list-ref terminals next-cursor))))
+    (show-term (list-ref terminals next-cursor))))
 
 (define (switch-term)
   (switch-term-by 1))
@@ -1155,8 +1104,7 @@
         (set-editor-clip-bottom! 0))
       (begin
         (set-TerminalRegistry-cursor! *terminal-registry* 0)
-        (set! *terminal-index* 1)
-        (show-panel-term (first (TerminalRegistry-terminals *terminal-registry*)))))
+        (set! *terminal-index* 1)))
 
   (enqueue-thread-local-callback (lambda () void)))
 
