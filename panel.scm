@@ -503,9 +503,11 @@
   (set! *default-terminal-rows* (area-height rect))
   (set! *default-terminal-cols* (area-width rect))
   ;; The PTY viewport excludes the border and padding drawn by the renderer.
-  (term-resize-from-term state
-                         (max 1 (- (area-height rect) 3))
-                         (max 1 (- (area-width rect) 4)))
+  (define rows (max 1 (- (area-height rect) 3)))
+  (define cols (max 1 (- (area-width rect) 4)))
+  (unless (and (= rows (unbox (Terminal-viewport-height state)))
+               (= cols (unbox (Terminal-viewport-width state))))
+    (term-resize-from-term state rows cols))
   rect)
 
 ;; Renders the terminal. The renderer is implemented primarily as a cursor
@@ -713,9 +715,7 @@
         (enqueue-thread-local-callback (lambda () (eval '(new-term))))
         event-result/consume]
 
-       ;; Fullscreen is owned by the host Panel. Ignore Ctrl-Enter here so the
-       ;; editor's global binding can update layout and native terminal state
-       ;; as one transition.
+       ;; Fullscreen is owned by the host Panel.
        [(equal? (event->key-event event) ctrl-enter)
         event-result/ignore]
 
