@@ -65,6 +65,7 @@
          switch-term
          switch-term-previous
          raise-terminal-if-active!
+         set-terminal-ignored-event-handler!
          term-resize
          (contract/out set-default-terminal-cols! (->/c int? void?))
          (contract/out set-default-terminal-rows! (->/c int? void?))
@@ -692,6 +693,17 @@
                   (string-append "\x1b;" text)
                   text)))))
 
+(define *terminal-ignored-event-handler*
+  (lambda (_event fallback) fallback))
+
+(define (set-terminal-ignored-event-handler! handler)
+  (unless (procedure? handler)
+    (error "steel-pty: terminal ignored event handler must be a procedure"))
+  (set! *terminal-ignored-event-handler* handler))
+
+(define (terminal-ignore-event event)
+  (*terminal-ignored-event-handler* event event-result/ignore))
+
 ;; Event handler for the terminal.
 ;; This primarily focuses on forwarding the key events
 ;; and the mouse events down to the underlying terminal
@@ -728,11 +740,10 @@
         (enqueue-thread-local-callback (lambda () (kill-active-terminal)))
         event-result/consume]
 
-       ;; Fullscreen is owned by the host Panel. Ignore Ctrl-Enter here so the
-       ;; editor's global binding can update layout and native terminal state
-       ;; as one transition.
+       ;; Fullscreen is owned by the host Panel. Delegate Ctrl-Enter so Panel
+       ;; can update layout and native terminal state as one transition.
        [(equal? (event->key-event event) ctrl-enter)
-        event-result/ignore]
+        (terminal-ignore-event event)]
 
        [(equal? (event->key-event event) ctrl-page-up)
         (set-box! (Terminal-focused? state) #f)
@@ -804,7 +815,7 @@
         event-result/consume]
 
        [(mouse-event? event) (handle-mouse-event state event *vte*)]
-       [else event-result/ignore])]
+       [else (terminal-ignore-event event)])]
 
     [(mouse-event? event)
      (cond
