@@ -16,7 +16,6 @@
                  (only-in create-native-pty-system!
                           kill-pty-process!
                           pty-process-send-command
-                          pty-process-send-command-char
                           async-try-read-line
                           virtual-terminal
                           vte/advance-bytes
@@ -679,6 +678,12 @@
   (define now (instant/now))
 
   (cond
+    ;; IME commits and clipboard pastes reach the terminal component directly.
+    ;; Send the complete string through the UTF-8-capable string API.
+    [(and (unbox (Terminal-focused? state)) (paste-event? event))
+     (pty-process-send-command *pty-process* (paste-event-string event))
+     event-result/consume]
+
     ;; If the terminal is focused, we are going to
     ;; possibly capture input
     [(unbox (Terminal-focused? state))
@@ -746,7 +751,7 @@
 
             (begin
 
-              (pty-process-send-command-char *pty-process* char)
+              (pty-process-send-command *pty-process* (string char))
               event-result/consume))]
 
        [(key-event-enter? event)
@@ -779,7 +784,7 @@
         event-result/consume]
 
        [char
-        (pty-process-send-command-char *pty-process* char)
+        (pty-process-send-command *pty-process* (string char))
         event-result/consume]
 
        [(mouse-event? event) (handle-mouse-event state event *vte*)]
@@ -1124,6 +1129,10 @@
   ; (log::info! "Intercepting key press")
 
   (cond
+    [(and (unbox (Terminal-focused? state)) (paste-event? event))
+     (pty-process-send-command *pty-process* (paste-event-string event))
+     event-result/consume-without-rerender]
+
     ;; If the terminal is focused, we are going to
     ;; possibly capture input
     [(unbox (Terminal-focused? state))
@@ -1187,7 +1196,7 @@
         event-result/consume-without-rerender]
 
        [char
-        (pty-process-send-command-char *pty-process* char)
+        (pty-process-send-command *pty-process* (string char))
         event-result/consume-without-rerender]
 
        [(mouse-event? event) (handle-mouse-event state event *vte*)]
