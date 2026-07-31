@@ -717,7 +717,7 @@
 
        [(equal? (event->key-event event) ctrl-shift-backtick)
         (set-box! (Terminal-focused? state) #f)
-        (enqueue-thread-local-callback (lambda () (eval '(new-term))))
+        (enqueue-thread-local-callback (lambda () (new-term)))
         event-result/consume]
 
        ;; Fullscreen is owned by the host Panel. Ignore Ctrl-Enter here so the
@@ -728,12 +728,12 @@
 
        [(equal? (event->key-event event) ctrl-page-up)
         (set-box! (Terminal-focused? state) #f)
-        (enqueue-thread-local-callback (lambda () (eval '(switch-term-previous))))
+        (enqueue-thread-local-callback (lambda () (switch-term-previous)))
         event-result/consume]
 
        [(equal? (event->key-event event) ctrl-page-down)
         (set-box! (Terminal-focused? state) #f)
-        (enqueue-thread-local-callback (lambda () (eval '(switch-term))))
+        (enqueue-thread-local-callback (lambda () (switch-term)))
         event-result/consume]
 
        ;; Toggle the terminal with the same shortcut used to open it.
