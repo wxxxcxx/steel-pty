@@ -662,6 +662,7 @@
 (define ctrl-l (string->key-event "C-l"))
 (define ctrl-backtick (string->key-event "C-`"))
 (define ctrl-shift-backtick (string->key-event "C-S-`"))
+(define ctrl-shift-w (string->key-event "C-S-w"))
 (define ctrl-enter (string->key-event "C-ret"))
 (define ctrl-page-up (string->key-event "C-pageup"))
 (define ctrl-page-down (string->key-event "C-pagedown"))
@@ -718,6 +719,13 @@
        [(equal? (event->key-event event) ctrl-shift-backtick)
         (set-box! (Terminal-focused? state) #f)
         (enqueue-thread-local-callback (lambda () (new-term)))
+        event-result/consume]
+
+       [(equal? (event->key-event event) ctrl-shift-w)
+        ;; Kill the active terminal instead of forwarding the shortcut to the
+        ;; shell. The registry owns process cleanup and component removal.
+        (set-box! (Terminal-focused? state) #f)
+        (enqueue-thread-local-callback (lambda () (kill-active-terminal)))
         event-result/consume]
 
        ;; Fullscreen is owned by the host Panel. Ignore Ctrl-Enter here so the
