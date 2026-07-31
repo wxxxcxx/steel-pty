@@ -690,10 +690,11 @@
         (enqueue-thread-local-callback (lambda () (eval '(new-term))))
         event-result/consume]
 
+       ;; Fullscreen is owned by the host Panel. Ignore Ctrl-Enter here so the
+       ;; editor's global binding can update layout and native terminal state
+       ;; as one transition.
        [(equal? (event->key-event event) ctrl-enter)
-        (enqueue-thread-local-callback
-          (lambda () (eval '(toggle-terminal-fullscreen))))
-        event-result/consume]
+        event-result/ignore]
 
        [(equal? (event->key-event event) ctrl-page-up)
         (set-box! (Terminal-focused? state) #f)
