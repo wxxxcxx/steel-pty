@@ -674,17 +674,30 @@
        (<= code 122)
        (string (integer->char (- code 96)))))
 
+(define (terminal-key-modifier? event modifier)
+  (define value (or (key-event-modifier event) 0))
+  (not (= 0 (bitwise-and value modifier))))
+
+;; Terminals encode Meta/Alt character shortcuts as ESC-prefixed input.
+;; This covers shortcuts such as Alt+q, Alt+b, and Alt+f without listing them.
+(define (terminal-key-text event)
+  (define char (key-event-char event))
+  (and char
+       (let ([text (if (terminal-key-modifier? event key-modifier-ctrl)
+                       (terminal-control-text char)
+                       (string char))])
+         (and text
+              (if (terminal-key-modifier? event key-modifier-alt)
+                  (string-append "\x1b;" text)
+                  text)))))
+
 ;; Event handler for the terminal.
 ;; This primarily focuses on forwarding the key events
 ;; and the mouse events down to the underlying terminal
 ;; instance. Care is taken to avoid extra allocations
 ;; in order to make this as smooth as possible.
 (define (terminal-event-handler state event)
-  (define char (key-event-char event))
-  (define control-text
-    (and char
-         (equal? (key-event-modifier event) key-modifier-ctrl)
-         (terminal-control-text char)))
+  (define key-text (terminal-key-text event))
   (define *pty-process* (Terminal-*pty-process* state))
   (define *vte* (Terminal-*vte* state))
   (define now (instant/now))
@@ -733,8 +746,8 @@
         (pop-last-component-by-name! (Terminal-name state))
         event-result/consume]
 
-       [control-text
-        (pty-process-send-command *pty-process* control-text)
+       [key-text
+        (pty-process-send-command *pty-process* key-text)
         event-result/consume]
 
        ;; Backspace
@@ -780,10 +793,6 @@
         event-result/consume]
        [(key-event-left? event)
         (pty-process-send-command *pty-process* "\x1b;[D")
-        event-result/consume]
-
-       [char
-        (pty-process-send-command *pty-process* (string char))
         event-result/consume]
 
        [(mouse-event? event) (handle-mouse-event state event *vte*)]
@@ -1120,11 +1129,7 @@
 (define *NEXT-LOOP* #f)
 
 (define (xplr-event-handler state event)
-  (define char (key-event-char event))
-  (define control-text
-    (and char
-         (equal? (key-event-modifier event) key-modifier-ctrl)
-         (terminal-control-text char)))
+  (define key-text (terminal-key-text event))
   (define *pty-process* (Terminal-*pty-process* state))
   (define *vte* (Terminal-*vte* state))
   (define now (instant/now))
@@ -1141,8 +1146,8 @@
     [(unbox (Terminal-focused? state))
 
      (cond
-       [control-text
-        (pty-process-send-command *pty-process* control-text)
+       [key-text
+        (pty-process-send-command *pty-process* key-text)
         event-result/consume-without-rerender]
 
        ;; Backspace
@@ -1200,10 +1205,6 @@
         event-result/consume-without-rerender]
        [(key-event-left? event)
         (pty-process-send-command *pty-process* "\x1b;[D")
-        event-result/consume-without-rerender]
-
-       [char
-        (pty-process-send-command *pty-process* (string char))
         event-result/consume-without-rerender]
 
        [(mouse-event? event) (handle-mouse-event state event *vte*)]
