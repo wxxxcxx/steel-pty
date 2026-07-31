@@ -20,6 +20,7 @@
                           async-try-read-line
                           virtual-terminal
                           vte/advance-bytes
+                          vte/send-paste
                           vte/advance-bytes-with-carriage-return
                           vte/lines
                           vte/line->string
@@ -704,6 +705,12 @@
   (define now (instant/now))
 
   (cond
+    ;; Paste is a distinct Helix event, not a sequence of key events. Let the
+    ;; VTE preserve bracketed-paste semantics requested by the child process.
+    [(and (unbox (Terminal-focused? state)) (paste-event? event))
+     (vte/send-paste *vte* (paste-event-string event))
+     event-result/consume]
+
     ;; If the terminal is focused, we are going to
     ;; possibly capture input
     [(unbox (Terminal-focused? state))
